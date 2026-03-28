@@ -45,6 +45,7 @@ def build_dataset(args, rank=0, is_test=False):
             angle_feat_size=args.angle_feat_size, 
             seed=args.seed+rank, sel_data_idxs=None, name='aug', 
             multi_endpoints=args.multi_endpoints, multi_startpoints=args.multi_startpoints,
+            dynamic_memory_cfg=args,
         )
     else:
         aug_env = None
@@ -63,6 +64,7 @@ def build_dataset(args, rank=0, is_test=False):
             angle_feat_size=args.angle_feat_size, seed=args.seed+rank,
             sel_data_idxs=None, name='train', 
             multi_endpoints=args.multi_endpoints, multi_startpoints=args.multi_startpoints,
+            dynamic_memory_cfg=args,
         )
 
     # val_env_names = ['val_train_seen']
@@ -83,6 +85,7 @@ def build_dataset(args, rank=0, is_test=False):
             angle_feat_size=args.angle_feat_size, seed=args.seed+rank,
             sel_data_idxs=None if args.world_size < 2 else (rank, args.world_size), name=split,
             max_objects=None, multi_endpoints=False, multi_startpoints=False,
+            dynamic_memory_cfg=args,
         )   # evaluation using all objects
         val_envs[split] = val_env
 

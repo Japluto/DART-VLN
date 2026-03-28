@@ -41,7 +41,8 @@ def build_dataset(args, rank=0, is_test=False):
         aug_env = dataset_class(
             feat_db, aug_instr_data, args.connectivity_dir, 
             batch_size=args.batch_size, angle_feat_size=args.angle_feat_size, 
-            seed=args.seed+rank, sel_data_idxs=None, name='aug', 
+            seed=args.seed+rank, sel_data_idxs=None, name='aug',
+            dynamic_memory_cfg=args,
         )
     else:
         aug_env = None
@@ -55,7 +56,8 @@ def build_dataset(args, rank=0, is_test=False):
         feat_db, train_instr_data, args.connectivity_dir,
         batch_size=args.batch_size, 
         angle_feat_size=args.angle_feat_size, seed=args.seed+rank,
-        sel_data_idxs=None, name='train', 
+        sel_data_idxs=None, name='train',
+        dynamic_memory_cfg=args,
     )
 
     # val_env_names = ['val_train_seen']
@@ -77,6 +79,7 @@ def build_dataset(args, rank=0, is_test=False):
             feat_db, val_instr_data, args.connectivity_dir, batch_size=args.batch_size, 
             angle_feat_size=args.angle_feat_size, seed=args.seed+rank,
             sel_data_idxs=None if args.world_size < 2 else (rank, args.world_size), name=split,
+            dynamic_memory_cfg=args,
         )   # evaluation using all objects
         val_envs[split] = val_env
 

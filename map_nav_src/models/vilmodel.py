@@ -698,9 +698,19 @@ class GlocalTextPathNavCMT(BertPreTrainedModel):
             nn.Linear(5, config.hidden_size),
             BertLayerNorm(config.hidden_size, eps=1e-12)
         )
-        
+
         self.text_proj = nn.Linear(768, 768)
         self.grid_proj = nn.Linear(768, 768)
+        self.dynamic_memory_enabled = bool(getattr(config, 'dynamic_memory_enabled', False))
+        self.dynamic_memory_mode = getattr(config, 'dynamic_memory_mode', 'off')
+        self.dynamic_memory_decay = self.dynamic_memory_enabled and (
+            self.dynamic_memory_mode in ('decay_only', 'full') or
+            bool(getattr(config, 'dynamic_memory_decay_enabled', False))
+        )
+        self.dynamic_memory_repeat_weight = float(getattr(config, 'dynamic_memory_repeat_weight', 0.15))
+        self.dynamic_memory_decay_lambda = float(getattr(config, 'dynamic_memory_decay_lambda', 0.12))
+        self.dynamic_memory_min_mem_weight = float(getattr(config, 'dynamic_memory_min_mem_weight', 0.35))
+        self.dynamic_memory_max_mem_weight = float(getattr(config, 'dynamic_memory_max_mem_weight', 1.0))
 
         if config.glocal_fuse:
             self.sap_fuse_linear = ClsPrediction(self.config.hidden_size, input_size=self.config.hidden_size*2)
@@ -726,6 +736,27 @@ class GlocalTextPathNavCMT(BertPreTrainedModel):
                 v.requires_grad = False
             for k, v in self.og_head.named_parameters():
                 v.requires_grad = False
+
+    def _compute_grid_memory_weights(self, grid_age, grid_visit_count, grid_novelty_ema):
+        if (not self.dynamic_memory_decay) or grid_age is None:
+            return None
+        if grid_age.numel() == 0:
+            return grid_age.float()
+
+        age = grid_age.float()
+        visit_count = grid_visit_count.float().clamp_min(1.0)
+        novelty_ema = grid_novelty_ema.float().clamp(0.0, 1.0)
+
+        recency = torch.exp(-self.dynamic_memory_decay_lambda * age)
+        repeat_norm = visit_count / (visit_count + 1.0)
+        repeat_factor = (1.0 - self.dynamic_memory_repeat_weight * repeat_norm).clamp(min=0.1)
+        novelty_factor = 0.5 + 0.5 * novelty_ema
+
+        memory_weights = recency * repeat_factor * novelty_factor
+        return memory_weights.clamp(
+            min=self.dynamic_memory_min_mem_weight,
+            max=self.dynamic_memory_max_mem_weight
+        )
     
     def forward_text(self, txt_ids, txt_masks):
         txt_token_type_ids = torch.zeros_like(txt_ids)
@@ -780,31 +811,39 @@ class GlocalTextPathNavCMT(BertPreTrainedModel):
         return pano_embeds, pano_masks
 
     def forward_navigation_per_step(
-        self, txt_embeds, txt_masks, gmap_img_embeds, gmap_step_ids, gmap_pos_fts, 
+        self, txt_embeds, txt_masks, gmap_img_embeds, gmap_step_ids, gmap_pos_fts,
         gmap_masks, gmap_pair_dists, gmap_visited_masks, gmap_vpids,
-        vp_img_embeds, vp_pos_fts, vp_masks, vp_nav_masks, vp_obj_masks, vp_cand_vpids, grid_fts, grid_map, gridmap_pos_fts
+        vp_img_embeds, vp_pos_fts, vp_masks, vp_nav_masks, vp_obj_masks, vp_cand_vpids,
+        grid_fts, grid_map, gridmap_pos_fts, grid_age, grid_visit_count, grid_novelty_ema
     ):
-       
+
         batch_size = len(grid_fts)
         grid_map_input = torch.zeros(batch_size,14*14,768).to(grid_fts[0].device)
-        
 
-        
         text_fts = self.text_proj(txt_embeds).permute(0,2,1)
         grid_masks = [[] for b in range(batch_size)]
         max_cell_num = 0
         for b in range(batch_size):
             tmp_fts = grid_fts[b].to(torch.float32)
             grid_fts_weight,_ = (tmp_fts @ text_fts[b]).max(dim=-1)
+            memory_weights = self._compute_grid_memory_weights(
+                grid_age[b], grid_visit_count[b], grid_novelty_ema[b]
+            )
             tmp_fts = self.grid_proj(tmp_fts)
 
             for i in range(14*14):
-                cell_fts = tmp_fts[grid_map[b]==i]
+                cell_mask = grid_map[b] == i
+                cell_fts = tmp_fts[cell_mask]
                 if cell_fts.shape[0] == 0:
                     grid_masks[b].append(0)
                 else:
                     grid_masks[b].append(1)
-                grid_map_input[b,i] = (cell_fts * torch.softmax(grid_fts_weight[grid_map[b]==i],dim=-1).unsqueeze(-1)).sum(-2)
+                    cell_logits = grid_fts_weight[cell_mask]
+                    if memory_weights is not None:
+                        # Soft forgetting is injected as a log-prior on per-patch aggregation.
+                        cell_logits = cell_logits + torch.log(memory_weights[cell_mask].clamp(min=1e-6))
+                    cell_weights = torch.softmax(cell_logits, dim=-1)
+                    grid_map_input[b, i] = (cell_fts * cell_weights.unsqueeze(-1)).sum(-2)
             
             if max_cell_num < sum(grid_masks[b]):
                 max_cell_num = sum(grid_masks[b])
@@ -931,12 +970,11 @@ class GlocalTextPathNavCMT(BertPreTrainedModel):
 
         elif mode == 'navigation':
              return self.forward_navigation_per_step(
-                batch['txt_embeds'], batch['txt_masks'], batch['gmap_img_embeds'], 
+                batch['txt_embeds'], batch['txt_masks'], batch['gmap_img_embeds'],
                 batch['gmap_step_ids'], batch['gmap_pos_fts'], batch['gmap_masks'],
-                batch['gmap_pair_dists'], batch['gmap_visited_masks'], batch['gmap_vpids'], 
+                batch['gmap_pair_dists'], batch['gmap_visited_masks'], batch['gmap_vpids'],
                 batch['vp_img_embeds'], batch['vp_pos_fts'], batch['vp_masks'],
-                batch['vp_nav_masks'], batch['vp_obj_masks'], batch['vp_cand_vpids'], batch['grid_fts'], batch['grid_map'], batch['gridmap_pos_fts']
+                batch['vp_nav_masks'], batch['vp_obj_masks'], batch['vp_cand_vpids'],
+                batch['grid_fts'], batch['grid_map'], batch['gridmap_pos_fts'],
+                batch['grid_age'], batch['grid_visit_count'], batch['grid_novelty_ema']
             )
-
-            
-       

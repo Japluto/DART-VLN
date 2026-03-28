@@ -92,6 +92,24 @@ def parse_args():
     parser.add_argument('--obj_feat_size', type=int, default=2048)
     parser.add_argument('--views', type=int, default=36)
 
+    # Inference-time dynamic grid memory heuristics
+    parser.add_argument('--dynamic_memory_enabled', action='store_true', default=False)
+    parser.add_argument(
+        '--dynamic_memory_mode', type=str, default='off',
+        choices=['off', 'update_only', 'decay_only', 'full']
+    )
+    parser.add_argument('--dynamic_memory_base_gate', type=float, default=0.15)
+    parser.add_argument('--dynamic_memory_novelty_weight', type=float, default=0.35)
+    parser.add_argument('--dynamic_memory_age_weight', type=float, default=0.20)
+    parser.add_argument('--dynamic_memory_repeat_weight', type=float, default=0.15)
+    parser.add_argument('--dynamic_memory_min_gate', type=float, default=0.05)
+    parser.add_argument('--dynamic_memory_max_gate', type=float, default=0.85)
+    parser.add_argument('--dynamic_memory_decay_enabled', action='store_true', default=False)
+    parser.add_argument('--dynamic_memory_decay_lambda', type=float, default=0.12)
+    parser.add_argument('--dynamic_memory_min_mem_weight', type=float, default=0.35)
+    parser.add_argument('--dynamic_memory_max_mem_weight', type=float, default=1.0)
+    parser.add_argument('--dynamic_memory_match_radius', type=float, default=0.75)
+
     # # A2C
     parser.add_argument("--gamma", default=0.9, type=float, help='reward discount factor')
     parser.add_argument(
@@ -140,4 +158,3 @@ def postprocess_args(args):
     os.makedirs(args.pred_dir, exist_ok=True)
 
     return args
-

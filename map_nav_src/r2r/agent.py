@@ -168,7 +168,13 @@ class GMapNavAgent(Seq2SeqAgent):
             'gmap_step_ids': batch_gmap_step_ids, 'gmap_pos_fts': batch_gmap_pos_fts,
             'gmap_visited_masks': batch_gmap_visited_masks, 
             'gmap_pair_dists': gmap_pair_dists, 'gmap_masks': batch_gmap_masks,
-            'no_vp_left': batch_no_vp_left,'grid_fts':[obs[index]['grid_fts'].cuda() for index in range(len(obs))],'grid_map':[obs[index]['grid_map'].cuda() for index in range(len(obs))],'gridmap_pos_fts': torch.cat([obs[index]['gridmap_pos_fts'].unsqueeze(0).cuda() for index in range(len(obs))],dim=0)
+            'no_vp_left': batch_no_vp_left,
+            'grid_fts': [obs[index]['grid_fts'].cuda() for index in range(len(obs))],
+            'grid_map': [obs[index]['grid_map'].cuda() for index in range(len(obs))],
+            'gridmap_pos_fts': torch.cat([obs[index]['gridmap_pos_fts'].unsqueeze(0).cuda() for index in range(len(obs))], dim=0),
+            'grid_age': [obs[index]['grid_age'].cuda() for index in range(len(obs))],
+            'grid_visit_count': [obs[index]['grid_visit_count'].cuda() for index in range(len(obs))],
+            'grid_novelty_ema': [obs[index]['grid_novelty_ema'].cuda() for index in range(len(obs))],
         }
 
     def _nav_vp_variable(self, obs, gmaps, pano_embeds, cand_vpids, view_lens, nav_types):

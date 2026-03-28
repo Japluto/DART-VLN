@@ -61,6 +61,19 @@ def get_vlnbert_models(args, config=None):
     vis_config.num_x_layers = args.num_x_layers
     vis_config.graph_sprels = args.graph_sprels
     vis_config.glocal_fuse = args.fusion == 'dynamic'
+    vis_config.dynamic_memory_enabled = args.dynamic_memory_enabled
+    vis_config.dynamic_memory_mode = args.dynamic_memory_mode
+    vis_config.dynamic_memory_base_gate = args.dynamic_memory_base_gate
+    vis_config.dynamic_memory_novelty_weight = args.dynamic_memory_novelty_weight
+    vis_config.dynamic_memory_age_weight = args.dynamic_memory_age_weight
+    vis_config.dynamic_memory_repeat_weight = args.dynamic_memory_repeat_weight
+    vis_config.dynamic_memory_min_gate = args.dynamic_memory_min_gate
+    vis_config.dynamic_memory_max_gate = args.dynamic_memory_max_gate
+    vis_config.dynamic_memory_decay_enabled = args.dynamic_memory_decay_enabled
+    vis_config.dynamic_memory_decay_lambda = args.dynamic_memory_decay_lambda
+    vis_config.dynamic_memory_min_mem_weight = args.dynamic_memory_min_mem_weight
+    vis_config.dynamic_memory_max_mem_weight = args.dynamic_memory_max_mem_weight
+    vis_config.dynamic_memory_match_radius = args.dynamic_memory_match_radius
 
     vis_config.fix_lang_embedding = args.fix_lang_embedding
     vis_config.fix_pano_embedding = args.fix_pano_embedding

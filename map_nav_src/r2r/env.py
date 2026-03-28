@@ -124,7 +124,11 @@ class EnvBatch(object):
     ''' A simple wrapper for a batch of MatterSim environments,
         using discretized viewpoints and pretrained features '''
 
-    def __init__(self, connectivity_dir, scan_data_dir=None, feat_db=None, semantic_map_dir="../datasets/R2R/features", batch_size=100):
+    def __init__(
+        self, connectivity_dir, scan_data_dir=None, feat_db=None,
+        semantic_map_dir="../datasets/R2R/features", batch_size=100,
+        dynamic_memory_cfg=None
+    ):
         """
         1. Load pretrained image feature
         2. Init the Simulator.
@@ -147,6 +151,23 @@ class EnvBatch(object):
         self.min_y = [10000 for i in range(batch_size)]
         self.heading = [0 for i in range(batch_size)]
         self.global_map = [[] for i in range(batch_size)]
+        self.global_last_update_step = [[] for i in range(batch_size)]
+        self.global_visit_count = [[] for i in range(batch_size)]
+        self.global_novelty_ema = [[] for i in range(batch_size)]
+        self.global_step = [0 for i in range(batch_size)]
+        self.dynamic_memory_enabled = bool(getattr(dynamic_memory_cfg, 'dynamic_memory_enabled', False))
+        self.dynamic_memory_mode = getattr(dynamic_memory_cfg, 'dynamic_memory_mode', 'off').lower()
+        if not self.dynamic_memory_enabled:
+            self.dynamic_memory_mode = 'off'
+        self.dynamic_memory_update = self.dynamic_memory_mode in ('update_only', 'full')
+        self.dynamic_memory_decay = self.dynamic_memory_mode in ('decay_only', 'full')
+        self.dynamic_memory_base_gate = float(getattr(dynamic_memory_cfg, 'dynamic_memory_base_gate', 0.15))
+        self.dynamic_memory_novelty_weight = float(getattr(dynamic_memory_cfg, 'dynamic_memory_novelty_weight', 0.35))
+        self.dynamic_memory_age_weight = float(getattr(dynamic_memory_cfg, 'dynamic_memory_age_weight', 0.20))
+        self.dynamic_memory_repeat_weight = float(getattr(dynamic_memory_cfg, 'dynamic_memory_repeat_weight', 0.15))
+        self.dynamic_memory_min_gate = float(getattr(dynamic_memory_cfg, 'dynamic_memory_min_gate', 0.05))
+        self.dynamic_memory_max_gate = float(getattr(dynamic_memory_cfg, 'dynamic_memory_max_gate', 0.85))
+        self.dynamic_memory_match_radius = float(getattr(dynamic_memory_cfg, 'dynamic_memory_match_radius', 0.75))
 
         for i in range(batch_size):
             sim = MatterSim.Simulator()
@@ -189,6 +210,110 @@ class EnvBatch(object):
         self.heading = [0 for i in range(self.batch_size)]
         self.global_map = [[] for i in range(self.batch_size)]
         self.feature_states = [None for i in range(len(self.sims))]
+        self.global_last_update_step = [[] for i in range(self.batch_size)]
+        self.global_visit_count = [[] for i in range(self.batch_size)]
+        self.global_novelty_ema = [[] for i in range(self.batch_size)]
+        self.global_step = [0 for i in range(self.batch_size)]
+
+    def _append_history_metadata(self, i, count, step_id):
+        last_update = np.full((count,), step_id, dtype=np.float32)
+        visit_count = np.ones((count,), dtype=np.float32)
+        novelty_ema = np.ones((count,), dtype=np.float32)
+        if len(self.global_last_update_step[i]) == 0:
+            self.global_last_update_step[i] = last_update
+            self.global_visit_count[i] = visit_count
+            self.global_novelty_ema[i] = novelty_ema
+        else:
+            self.global_last_update_step[i] = np.concatenate((self.global_last_update_step[i], last_update), axis=0)
+            self.global_visit_count[i] = np.concatenate((self.global_visit_count[i], visit_count), axis=0)
+            self.global_novelty_ema[i] = np.concatenate((self.global_novelty_ema[i], novelty_ema), axis=0)
+
+    def _normalize_feat(self, feat):
+        norm = np.linalg.norm(feat)
+        if norm < 1e-6:
+            return feat
+        return feat / norm
+
+    def _compute_novelty(self, old_feat, new_feat):
+        old_norm = np.linalg.norm(old_feat)
+        new_norm = np.linalg.norm(new_feat)
+        if old_norm < 1e-6 or new_norm < 1e-6:
+            return 1.0
+        cosine = np.dot(old_feat, new_feat) / (old_norm * new_norm)
+        cosine = np.clip(cosine, -1.0, 1.0)
+        return float(np.clip(1.0 - cosine, 0.0, 1.0))
+
+    def _dynamic_memory_update(self, i, semantic, position_x, position_y, valid_mask, step_id):
+        semantic = semantic.astype(np.float32)
+        position_x = position_x.astype(np.float32)
+        position_y = position_y.astype(np.float32)
+
+        if len(self.global_semantic[i]) == 0:
+            valid_index = valid_mask.astype(bool)
+            if not valid_index.any():
+                valid_index = np.ones_like(valid_mask, dtype=bool)
+            self.global_semantic[i] = semantic[valid_index]
+            self.global_position_x[i] = position_x[valid_index]
+            self.global_position_y[i] = position_y[valid_index]
+            self.global_map[i] = np.full((valid_index.sum(),), -1, dtype=np.float32)
+            self.global_mask[i] = np.ones((valid_index.sum(),), dtype=np.float32)
+            self.global_last_update_step[i] = np.full((valid_index.sum(),), step_id, dtype=np.float32)
+            self.global_visit_count[i] = np.ones((valid_index.sum(),), dtype=np.float32)
+            self.global_novelty_ema[i] = np.ones((valid_index.sum(),), dtype=np.float32)
+            return
+
+        radius_sq = self.dynamic_memory_match_radius ** 2
+        for patch_idx in np.where(valid_mask.astype(bool))[0]:
+            new_feat = semantic[patch_idx]
+            new_x = position_x[patch_idx]
+            new_y = position_y[patch_idx]
+
+            dx = self.global_position_x[i] - new_x
+            dy = self.global_position_y[i] - new_y
+            candidate_ids = np.where(dx * dx + dy * dy <= radius_sq)[0]
+
+            if candidate_ids.size == 0:
+                self.global_semantic[i] = np.concatenate((self.global_semantic[i], new_feat[None]), axis=0)
+                self.global_position_x[i] = np.concatenate((self.global_position_x[i], np.array([new_x], dtype=np.float32)), axis=0)
+                self.global_position_y[i] = np.concatenate((self.global_position_y[i], np.array([new_y], dtype=np.float32)), axis=0)
+                self.global_map[i] = np.concatenate((self.global_map[i], np.array([-1], dtype=np.float32)), axis=0)
+                self.global_mask[i] = np.concatenate((self.global_mask[i], np.array([1], dtype=np.float32)), axis=0)
+                self.global_last_update_step[i] = np.concatenate((self.global_last_update_step[i], np.array([step_id], dtype=np.float32)), axis=0)
+                self.global_visit_count[i] = np.concatenate((self.global_visit_count[i], np.array([1], dtype=np.float32)), axis=0)
+                self.global_novelty_ema[i] = np.concatenate((self.global_novelty_ema[i], np.array([1], dtype=np.float32)), axis=0)
+                continue
+
+            nearest_idx = candidate_ids[np.argmin(dx[candidate_ids] * dx[candidate_ids] + dy[candidate_ids] * dy[candidate_ids])]
+            old_feat = self.global_semantic[i][nearest_idx]
+            novelty = self._compute_novelty(old_feat, new_feat)
+            age = float(step_id - self.global_last_update_step[i][nearest_idx])
+            age_norm = min(age / float(TRAIN_MAX_STEP), 1.0)
+            repeat_norm = self.global_visit_count[i][nearest_idx] / (self.global_visit_count[i][nearest_idx] + 1.0)
+            # Heuristic write gate: favor novel/recent evidence and damp repeated updates.
+            update_gate = self.dynamic_memory_base_gate
+            update_gate += self.dynamic_memory_novelty_weight * novelty
+            update_gate += self.dynamic_memory_age_weight * age_norm
+            update_gate -= self.dynamic_memory_repeat_weight * repeat_norm
+            update_gate = float(np.clip(
+                update_gate,
+                self.dynamic_memory_min_gate,
+                self.dynamic_memory_max_gate
+            ))
+
+            blended_feat = (1.0 - update_gate) * old_feat + update_gate * new_feat
+            self.global_semantic[i][nearest_idx] = self._normalize_feat(blended_feat)
+            self.global_position_x[i][nearest_idx] = (1.0 - update_gate) * self.global_position_x[i][nearest_idx] + update_gate * new_x
+            self.global_position_y[i][nearest_idx] = (1.0 - update_gate) * self.global_position_y[i][nearest_idx] + update_gate * new_y
+            self.global_last_update_step[i][nearest_idx] = step_id
+            self.global_visit_count[i][nearest_idx] += 1.0
+            self.global_novelty_ema[i][nearest_idx] = 0.5 * self.global_novelty_ema[i][nearest_idx] + 0.5 * novelty
+
+    def _get_memory_metadata(self, i):
+        if len(self.global_last_update_step[i]) == 0:
+            empty = np.zeros((0,), dtype=np.float32)
+            return empty, empty, empty
+        age = self.global_step[i] - self.global_last_update_step[i]
+        return age.astype(np.float32), self.global_visit_count[i].astype(np.float32), self.global_novelty_ema[i].astype(np.float32)
 
 
     def get_global_target(self,obs,next_gt_vp):
@@ -271,6 +396,8 @@ class EnvBatch(object):
 
         
         self.heading[i] = state.heading
+        self.global_step[i] += 1
+        step_id = self.global_step[i]
         viewpoint_x_list = []
         viewpoint_y_list = []
         depth = self.DepthDB.get_image_feature(scan_id,viewpoint_id)
@@ -280,7 +407,6 @@ class EnvBatch(object):
 
         depth_mask = np.ones(depth.shape)
         depth_mask[depth==0] = 0
-        self.global_mask[i].append(depth_mask[12:24].reshape(12,-1))
         position = self.viewpoint_info['%s_%s' % (scan_id, viewpoint_id)]
 
         
@@ -293,27 +419,43 @@ class EnvBatch(object):
 
         semantic = self.SemanticDB.get_image_feature(scan_id,viewpoint_id)
 
-        if len(self.global_semantic[i]) == 0:
-            self.global_semantic[i] = semantic[:,1:].reshape((-1,768))
-            self.global_map[i] = np.zeros((12*49,))
-            
-        else:
-            self.global_semantic[i] = np.concatenate((self.global_semantic[i],semantic[:,1:].reshape((-1,768))),axis=0)
-            self.global_map[i] = np.concatenate([self.global_map[i],np.zeros((12*49,))],0)
-
-        self.global_map[i].fill(-1)
+        semantic = semantic[:,1:].reshape((-1,768))
         position_x = np.concatenate(viewpoint_x_list,0)
         position_y = np.concatenate(viewpoint_y_list,0)
-        self.global_position_x[i].append(position_x)
-        self.global_position_y[i].append(position_y)
+        valid_mask = depth_mask[12:24].reshape(-1)
 
-        tmp_max_x = position_x.max()
+        if self.dynamic_memory_update:
+            self._dynamic_memory_update(i, semantic, position_x, position_y, valid_mask, step_id)
+            if len(self.global_semantic[i]) == 0:
+                self.global_map[i] = np.zeros((0,), dtype=np.float32)
+            else:
+                self.global_map[i] = np.full((len(self.global_semantic[i]),), -1, dtype=np.float32)
+        else:
+            self.global_mask[i].append(depth_mask[12:24].reshape(12,-1))
+            if len(self.global_semantic[i]) == 0:
+                self.global_semantic[i] = semantic
+                self.global_map[i] = np.zeros((12*49,))
+            else:
+                self.global_semantic[i] = np.concatenate((self.global_semantic[i], semantic), axis=0)
+                self.global_map[i] = np.concatenate([self.global_map[i], np.zeros((12*49,))], 0)
+            self.global_map[i].fill(-1)
+            self.global_position_x[i].append(position_x)
+            self.global_position_y[i].append(position_y)
+            self._append_history_metadata(i, semantic.shape[0], step_id)
+
+        if self.dynamic_memory_update:
+            tmp_max_x = self.global_position_x[i].max()
+            tmp_min_x = self.global_position_x[i].min()
+            tmp_max_y = self.global_position_y[i].max()
+            tmp_min_y = self.global_position_y[i].min()
+        else:
+            tmp_max_x = position_x.max()
+            tmp_min_x = position_x.min()
+            tmp_max_y = position_y.max()
+            tmp_min_y = position_y.min()
         if tmp_max_x > self.max_x[i]: self.max_x[i] = tmp_max_x
-        tmp_min_x = position_x.min()
         if tmp_min_x < self.min_x[i]: self.min_x[i] = tmp_min_x
-        tmp_max_y = position_y.max()
         if tmp_max_y > self.max_y[i]: self.max_y[i] = tmp_max_y
-        tmp_min_y = position_y.min()
         if tmp_min_y < self.min_y[i]: self.min_y[i] = tmp_min_y
 
 
@@ -334,10 +476,16 @@ class EnvBatch(object):
 
         angle = -self.heading[i]
         
-        global_position_x = np.concatenate(self.global_position_x[i],0)
-        global_position_y = np.concatenate(self.global_position_y[i],0)
-        local_map = self.global_semantic[i]
-        global_mask = np.concatenate(self.global_mask[i],0)
+        if self.dynamic_memory_update:
+            global_position_x = self.global_position_x[i]
+            global_position_y = self.global_position_y[i]
+            local_map = self.global_semantic[i]
+            global_mask = np.ones(local_map.shape[0], dtype=np.float32)
+        else:
+            global_position_x = np.concatenate(self.global_position_x[i],0)
+            global_position_y = np.concatenate(self.global_position_y[i],0)
+            local_map = self.global_semantic[i]
+            global_mask = np.concatenate(self.global_mask[i],0)
 
         tmp_x = global_position_x - position["x"]
         tmp_y = global_position_y - position["y"]
@@ -362,10 +510,9 @@ class EnvBatch(object):
         
 
         for patch_id in range(GLOBAL_WIDTH*GLOBAL_HEIGHT):
-
             filter_index = (map_index==patch_id)&label_index
             self.global_map[i][filter_index] = patch_id
- 
+
 
         gridmap_pos_fts = self.get_gridmap_pos_fts(half_len)
 
@@ -393,7 +540,8 @@ class EnvBatch(object):
             viewpoint_id = state.location.viewpointId
             
             tid, self.global_semantic[i],self.global_position_x[i],self.global_position_y[i],self.global_mask[i],self.global_map[i],self.max_x[i],self.min_x[i],self.max_y[i],self.min_y[i], gridmap_pos_fts = self.getGlobalMap(i)
-            self.feature_states[i] += (self.global_semantic[i],self.global_map[i],gridmap_pos_fts)
+            grid_age, grid_visit_count, grid_novelty_ema = self._get_memory_metadata(i)
+            self.feature_states[i] += (self.global_semantic[i], self.global_map[i], gridmap_pos_fts, grid_age, grid_visit_count, grid_novelty_ema)
 
         return self.feature_states
 
@@ -408,10 +556,14 @@ class R2RNavBatch(object):
     ''' Implements the REVERIE navigation task, using discretized viewpoints and pretrained features '''
 
     def __init__(
-        self, view_db, instr_data, connectivity_dir, 
-        batch_size=64, angle_feat_size=4, seed=0, name=None, sel_data_idxs=None
+        self, view_db, instr_data, connectivity_dir,
+        batch_size=64, angle_feat_size=4, seed=0, name=None, sel_data_idxs=None,
+        dynamic_memory_cfg=None
     ):
-        self.env = EnvBatch(connectivity_dir, feat_db=view_db, batch_size=batch_size)
+        self.env = EnvBatch(
+            connectivity_dir, feat_db=view_db, batch_size=batch_size,
+            dynamic_memory_cfg=dynamic_memory_cfg
+        )
         self.data = instr_data
         self.scans = set([x['scan'] for x in self.data])
         self.connectivity_dir = connectivity_dir
@@ -580,7 +732,7 @@ class R2RNavBatch(object):
 
     def _get_obs(self):
         obs = []
-        for i, (feature, state,grid_fts,grid_map,gridmap_pos_fts) in enumerate(self.env.getStates()):
+        for i, (feature, state, grid_fts, grid_map, gridmap_pos_fts, grid_age, grid_visit_count, grid_novelty_ema) in enumerate(self.env.getStates()):
 
             item = self.batch[i]
             base_view_id = state.viewIndex
@@ -607,7 +759,10 @@ class R2RNavBatch(object):
                 'path_id' : item['path_id'],
                 'grid_fts': torch.tensor(grid_fts),
                 'grid_map': torch.tensor(grid_map),
-                'gridmap_pos_fts': torch.tensor(gridmap_pos_fts)
+                'gridmap_pos_fts': torch.tensor(gridmap_pos_fts),
+                'grid_age': torch.tensor(grid_age),
+                'grid_visit_count': torch.tensor(grid_visit_count),
+                'grid_novelty_ema': torch.tensor(grid_novelty_ema),
             }
             # RL reward. The negative distance between the state and the final state
             # There are multiple gt end viewpoints on REVERIE. 
