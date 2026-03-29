@@ -20,6 +20,10 @@ dual_stop_mode="${DUAL_STOP_MODE:-off}"
 dual_stop_extra_args="${DUAL_STOP_EXTRA_ARGS:-}"
 instr_aug_mode="${INSTR_AUG_MODE:-off}"
 instr_aug_extra_args="${INSTR_AUG_EXTRA_ARGS:-}"
+instr_rerank_mode="${INSTR_RERANK_MODE:-off}"
+instr_rerank_extra_args="${INSTR_RERANK_EXTRA_ARGS:-}"
+anti_loop_mode="${ANTI_LOOP_MODE:-off}"
+anti_loop_extra_args="${ANTI_LOOP_EXTRA_ARGS:-}"
 
 name="Grid_Map-${train_alg}-${features}-single-gpu"
 name="${name}-seed.${seed}"
@@ -95,6 +99,46 @@ if [[ -n "${instr_aug_extra_args}" ]]; then
   instr_aug_args+=("${extra_instr_aug_args[@]}")
 fi
 
+instr_rerank_args=()
+case "${instr_rerank_mode}" in
+  off)
+    ;;
+  on)
+    instr_rerank_args+=(--instr_rerank_enabled)
+    ;;
+  *)
+    echo "Unsupported INSTR_RERANK_MODE: ${instr_rerank_mode}" >&2
+    echo "Use one of: off, on" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${instr_rerank_extra_args}" ]]; then
+  # shellcheck disable=SC2206
+  extra_instr_rerank_args=(${instr_rerank_extra_args})
+  instr_rerank_args+=("${extra_instr_rerank_args[@]}")
+fi
+
+anti_loop_args=()
+case "${anti_loop_mode}" in
+  off)
+    ;;
+  on)
+    anti_loop_args+=(--anti_loop_enabled)
+    ;;
+  *)
+    echo "Unsupported ANTI_LOOP_MODE: ${anti_loop_mode}" >&2
+    echo "Use one of: off, on" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${anti_loop_extra_args}" ]]; then
+  # shellcheck disable=SC2206
+  extra_anti_loop_args=(${anti_loop_extra_args})
+  anti_loop_args+=("${extra_anti_loop_args[@]}")
+fi
+
 flag="--root_dir ${DATA_ROOT}
       --dataset r2r
       --output_dir ${outdir}
@@ -162,7 +206,7 @@ cuda_devices="${CUDA_VISIBLE_DEVICES:-0}"
 case "${mode}" in
   # 当mode为"train"时的处理分支
   train)
-    echo "Running R2R training on ${cuda_devices}, output: ${outdir}, dynamic_memory=${dynamic_memory_mode}, dual_stop=${dual_stop_mode}, instr_aug=${instr_aug_mode}"
+    echo "Running R2R training on ${cuda_devices}, output: ${outdir}, dynamic_memory=${dynamic_memory_mode}, dual_stop=${dual_stop_mode}, instr_aug=${instr_aug_mode}, instr_rerank=${instr_rerank_mode}, anti_loop=${anti_loop_mode}"
     # 设置CUDA设备并使用指定的启动器运行main_nav.py进行训练
     # --resume_file 指定恢复训练的文件
     # --eval_first 表示在开始训练前先进行评估
@@ -170,12 +214,14 @@ case "${mode}" in
       "${dynamic_memory_args[@]}" \
       "${dual_stop_args[@]}" \
       "${instr_aug_args[@]}" \
+      "${instr_rerank_args[@]}" \
+      "${anti_loop_args[@]}" \
       --resume_file "${resume_file}" \
       --eval_first
     ;;
   # 当mode为"test"时的处理分支
   test)
-    echo "Running R2R test on ${cuda_devices}, output: ${outdir}, checkpoint: ${resume_file}, dynamic_memory=${dynamic_memory_mode}, dual_stop=${dual_stop_mode}, instr_aug=${instr_aug_mode}"
+    echo "Running R2R test on ${cuda_devices}, output: ${outdir}, checkpoint: ${resume_file}, dynamic_memory=${dynamic_memory_mode}, dual_stop=${dual_stop_mode}, instr_aug=${instr_aug_mode}, instr_rerank=${instr_rerank_mode}, anti_loop=${anti_loop_mode}"
     # 设置CUDA设备并使用指定的启动器运行main_nav.py进行测试
     # --test 表示测试模式
     # --submit 表示提交测试结果
@@ -184,6 +230,8 @@ case "${mode}" in
       "${dynamic_memory_args[@]}" \
       "${dual_stop_args[@]}" \
       "${instr_aug_args[@]}" \
+      "${instr_rerank_args[@]}" \
+      "${anti_loop_args[@]}" \
       --test --submit \
       --resume_file "${resume_file}"
     ;;

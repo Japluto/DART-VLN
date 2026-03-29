@@ -118,6 +118,26 @@ def parse_args():
     parser.add_argument('--instr_aug_max_keywords', type=int, default=6)
     parser.add_argument('--instr_aug_debug_print', action='store_true', default=False)
 
+    # Test-time instruction-aware action rerank
+    parser.add_argument('--instr_rerank_enabled', action='store_true', default=False)
+    parser.add_argument('--instr_rerank_uncertainty_thresh', type=float, default=0.04)
+    parser.add_argument('--instr_rerank_max_step', type=int, default=4)
+    parser.add_argument('--instr_rerank_dir_boost', type=float, default=0.02)
+    parser.add_argument('--instr_rerank_topk', type=int, default=3)
+    parser.add_argument(
+        '--instr_rerank_cue_source_mode', type=str, default='global',
+        choices=['global', 'local_first_clause']
+    )
+    parser.add_argument('--instr_rerank_heading_straight_thresh', type=float, default=0.35)
+    parser.add_argument('--instr_rerank_debug_print', action='store_true', default=False)
+
+    # Test-time anti-loop action penalty
+    parser.add_argument('--anti_loop_enabled', action='store_true', default=False)
+    parser.add_argument('--anti_loop_backtrack_penalty', type=float, default=0.08)
+    parser.add_argument('--anti_loop_revisit_penalty', type=float, default=0.03)
+    parser.add_argument('--anti_loop_revisit_thresh', type=int, default=2)
+    parser.add_argument('--anti_loop_min_step', type=int, default=2)
+
     # # A2C
     parser.add_argument("--gamma", default=0.9, type=float, help='reward discount factor')
     parser.add_argument(
