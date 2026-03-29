@@ -307,7 +307,7 @@ class GMapNavAgent(Seq2SeqAgent):
                     nav_inputs['no_vp_left'][i] or
                     (
                         best_nonstop_idx is not None and
-                        stop_prob >= best_nonstop_prob - self.args.dual_stop_margin_thresh
+                        (stop_prob - best_nonstop_prob) >= self.args.dual_stop_margin_thresh
                     )
                 )
 

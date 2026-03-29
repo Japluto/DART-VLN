@@ -108,9 +108,9 @@ def parse_args():
 
     # Test-time dual stop gating
     parser.add_argument('--dual_stop_enabled', action='store_true', default=False)
-    parser.add_argument('--dual_stop_score_thresh', type=float, default=0.48)
-    parser.add_argument('--dual_stop_min_step', type=int, default=2)
-    parser.add_argument('--dual_stop_margin_thresh', type=float, default=0.15)
+    parser.add_argument('--dual_stop_score_thresh', type=float, default=0.55)
+    parser.add_argument('--dual_stop_min_step', type=int, default=3)
+    parser.add_argument('--dual_stop_margin_thresh', type=float, default=0.03)
     parser.add_argument('--dual_stop_revisit_thresh', type=int, default=2)
 
     # # A2C
