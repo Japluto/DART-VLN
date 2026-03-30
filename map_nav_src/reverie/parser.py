@@ -110,12 +110,30 @@ def parse_args():
     parser.add_argument('--dynamic_memory_max_mem_weight', type=float, default=1.0)
     parser.add_argument('--dynamic_memory_match_radius', type=float, default=0.75)
 
+    # Instruction-side compatibility flags.
+    # These are kept for command-line consistency with R2R scripts.
+    # REVERIE currently does not apply instruction-side test-time heuristics.
+    parser.add_argument('--instr_aug_enabled', action='store_true', default=False)
+    parser.add_argument('--instr_aug_max_keywords', type=int, default=6)
+    parser.add_argument('--instr_aug_debug_print', action='store_true', default=False)
+    parser.add_argument('--instr_rerank_enabled', action='store_true', default=False)
+    parser.add_argument('--instr_rerank_uncertainty_thresh', type=float, default=0.04)
+    parser.add_argument('--instr_rerank_max_step', type=int, default=4)
+    parser.add_argument('--instr_rerank_dir_boost', type=float, default=0.02)
+    parser.add_argument('--instr_rerank_topk', type=int, default=3)
+    parser.add_argument(
+        '--instr_rerank_cue_source_mode', type=str, default='global',
+        choices=['global', 'local_first_clause']
+    )
+    parser.add_argument('--instr_rerank_heading_straight_thresh', type=float, default=0.35)
+    parser.add_argument('--instr_rerank_debug_print', action='store_true', default=False)
+
     # Inference-time anti-loop / immediate backtrack suppression
     parser.add_argument('--anti_loop_enabled', action='store_true', default=False)
-    parser.add_argument('--anti_loop_backtrack_penalty', type=float, default=0.08)
-    parser.add_argument('--anti_loop_revisit_penalty', type=float, default=0.03)
+    parser.add_argument('--anti_loop_backtrack_penalty', type=float, default=0.22)
+    parser.add_argument('--anti_loop_revisit_penalty', type=float, default=0.0)
     parser.add_argument('--anti_loop_revisit_thresh', type=int, default=2)
-    parser.add_argument('--anti_loop_min_step', type=int, default=2)
+    parser.add_argument('--anti_loop_min_step', type=int, default=1)
 
     # # A2C
     parser.add_argument("--gamma", default=0.9, type=float, help='reward discount factor')

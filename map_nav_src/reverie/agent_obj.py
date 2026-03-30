@@ -5,6 +5,7 @@ import numpy as np
 import random
 import math
 import time
+import re
 from collections import defaultdict
 try:
     import line_profiler  # noqa: F401
@@ -34,11 +35,30 @@ class GMapObjectNavAgent(Seq2SeqAgent):
         self.critic = Critic(self.args).cuda()
         # buffer
         self.scanvp_cands = {}
+        self.instr_rerank_stats = defaultdict(int)
         self.anti_loop_stats = defaultdict(int)
+        self._instr_rerank_debug_examples_printed = 0
 
     def test(self, use_dropout=False, feedback='argmax', allow_cheat=False, iters=None, viz=False):
+        self.instr_rerank_stats = defaultdict(int)
         self.anti_loop_stats = defaultdict(int)
+        self._instr_rerank_debug_examples_printed = 0
         super().test(use_dropout=use_dropout, feedback=feedback, allow_cheat=allow_cheat, iters=iters, viz=viz)
+        if self.args.instr_rerank_enabled and self.args.test and self.default_gpu:
+            print(
+                '[instr_rerank_stats] '
+                f"rerank_trigger_count={self.instr_rerank_stats['rerank_trigger_count']}, "
+                f"rerank_action_changed_count={self.instr_rerank_stats['rerank_action_changed_count']}, "
+                f"left_cue_count={self.instr_rerank_stats['left_cue_count']}, "
+                f"right_cue_count={self.instr_rerank_stats['right_cue_count']}, "
+                f"straight_cue_count={self.instr_rerank_stats['straight_cue_count']}, "
+                f"first_cue_used_count={self.instr_rerank_stats['first_cue_used_count']}, "
+                f"local_clause_used_count={self.instr_rerank_stats['local_clause_used_count']}, "
+                f"conflict_disabled_count={self.instr_rerank_stats['conflict_disabled_count']}, "
+                f"no_cue_disabled_count={self.instr_rerank_stats['no_cue_disabled_count']}, "
+                f"topk_match_count={self.instr_rerank_stats['topk_match_count']}, "
+                f"topk_rerank_applied_count={self.instr_rerank_stats['topk_rerank_applied_count']}"
+            )
         if self.args.anti_loop_enabled and self.args.test and self.default_gpu:
             print(
                 '[anti_loop_stats] '
@@ -310,6 +330,48 @@ class GMapObjectNavAgent(Seq2SeqAgent):
                 self.scanvp_cands[scanvp].setdefault(cand['viewpointId'], {})
                 self.scanvp_cands[scanvp][cand['viewpointId']] = cand['pointId']
 
+    def _get_instruction_cue_source(self, instruction):
+        if self.args.instr_rerank_cue_source_mode != 'local_first_clause':
+            return instruction, False
+
+        lowered = instruction.lower()
+        boundary_patterns = [r'\.', r',', r';', r'\s+and then\s+', r'\s+then\s+']
+        first_boundary = None
+        for pattern in boundary_patterns:
+            match = re.search(pattern, lowered)
+            if match is None:
+                continue
+            if first_boundary is None or match.start() < first_boundary:
+                first_boundary = match.start()
+
+        if first_boundary is None:
+            return instruction, False
+        return instruction[:first_boundary].strip(), True
+
+    def _extract_direction_cue(self, instruction):
+        cue_source, used_local_clause = self._get_instruction_cue_source(instruction)
+        lowered = cue_source.lower()
+        phrase_patterns = (
+            ('left', r'(?<!\w)turn\s+left(?!\w)'),
+            ('right', r'(?<!\w)turn\s+right(?!\w)'),
+            ('straight', r'(?<!\w)(?:go|walk|head)\s+straight(?!\w)'),
+        )
+        matches = []
+        for cue, pattern in phrase_patterns:
+            for match in re.finditer(pattern, lowered):
+                matches.append((match.start(), cue))
+        if len(matches) == 0:
+            return None, 'no_cue', cue_source, used_local_clause
+        matches.sort(key=lambda x: x[0])
+        return matches[0][1], None, cue_source, used_local_clause
+
+    def _bucket_heading_direction(self, heading):
+        if abs(float(heading)) <= self.args.instr_rerank_heading_straight_thresh:
+            return 'straight'
+        if heading < -self.args.instr_rerank_heading_straight_thresh:
+            return 'left'
+        return 'right'
+
     def _get_graph_path_hops(self, gmap, cur_vp, target_vp):
         path = gmap.graph.path(cur_vp, target_vp)
         next_hop = path[0] if len(path) > 0 else None
@@ -319,6 +381,95 @@ class GMapObjectNavAgent(Seq2SeqAgent):
         elif len(path) > 1:
             prev_hop = path[-2]
         return path, next_hop, prev_hop
+
+    def _apply_instruction_rerank(self, obs, nav_probs, nav_logits, nav_vpids, t, ended):
+        if (not self.args.instr_rerank_enabled) or (not self.args.test):
+            return nav_probs
+        if self.feedback != 'argmax' or t >= self.args.instr_rerank_max_step:
+            return nav_probs
+
+        adjusted_nav_probs = nav_probs.clone()
+        cpu_nav_probs = nav_probs.detach().cpu()
+        cpu_nav_logits = nav_logits.detach().cpu()
+
+        for i, ob in enumerate(obs):
+            if ended[i]:
+                continue
+
+            original_top_idx = int(torch.argmax(cpu_nav_probs[i]).item())
+            if original_top_idx == 0:
+                continue
+
+            cue, disable_reason, cue_source, used_local_clause = self._extract_direction_cue(ob['instruction'])
+            if disable_reason == 'no_cue':
+                self.instr_rerank_stats['no_cue_disabled_count'] += 1
+                continue
+            if disable_reason == 'conflict':
+                self.instr_rerank_stats['conflict_disabled_count'] += 1
+                continue
+            self.instr_rerank_stats[f'{cue}_cue_count'] += 1
+            self.instr_rerank_stats['first_cue_used_count'] += 1
+            if used_local_clause:
+                self.instr_rerank_stats['local_clause_used_count'] += 1
+
+            valid_nonstop_indices = [
+                j for j in range(1, len(nav_vpids[i]))
+                if torch.isfinite(cpu_nav_logits[i, j]).item()
+            ]
+            if len(valid_nonstop_indices) < 2:
+                continue
+
+            valid_nonstop_probs = sorted(
+                [float(cpu_nav_probs[i, j].item()) for j in valid_nonstop_indices],
+                reverse=True
+            )
+            if valid_nonstop_probs[0] - valid_nonstop_probs[1] > self.args.instr_rerank_uncertainty_thresh:
+                continue
+
+            topk_nonstop_indices = set(
+                sorted(
+                    valid_nonstop_indices,
+                    key=lambda j: float(cpu_nav_probs[i, j].item()),
+                    reverse=True
+                )[:self.args.instr_rerank_topk]
+            )
+
+            vp_to_score_idx = {vp: j for j, vp in enumerate(nav_vpids[i]) if vp is not None}
+            matching_indices = []
+            for cand in ob['candidate']:
+                score_idx = vp_to_score_idx.get(cand['viewpointId'])
+                if score_idx is None:
+                    continue
+                if not torch.isfinite(cpu_nav_logits[i, score_idx]).item():
+                    continue
+                if score_idx not in topk_nonstop_indices:
+                    continue
+                if self._bucket_heading_direction(cand['heading']) == cue:
+                    matching_indices.append(score_idx)
+
+            if not matching_indices:
+                continue
+
+            matching_indices = sorted(set(matching_indices))
+            self.instr_rerank_stats['topk_match_count'] += 1
+            adjusted_nav_probs[i, matching_indices] += self.args.instr_rerank_dir_boost
+            self.instr_rerank_stats['rerank_trigger_count'] += 1
+            self.instr_rerank_stats['topk_rerank_applied_count'] += 1
+
+            reranked_top_idx = int(torch.argmax(adjusted_nav_probs[i]).item())
+            if reranked_top_idx != original_top_idx:
+                self.instr_rerank_stats['rerank_action_changed_count'] += 1
+
+            if self.args.instr_rerank_debug_print and self._instr_rerank_debug_examples_printed < 3:
+                print('[instr_rerank] instruction:', ob['instruction'])
+                print('[instr_rerank] cue_source:', cue_source)
+                print('[instr_rerank] cue:', cue)
+                print('[instr_rerank] activated: True')
+                print('[instr_rerank] original_top_idx:', original_top_idx)
+                print('[instr_rerank] reranked_top_idx:', reranked_top_idx)
+                self._instr_rerank_debug_examples_printed += 1
+
+        return adjusted_nav_probs
 
     def _apply_anti_loop_penalty(self, nav_probs, nav_logits, nav_vpids, gmaps, obs, t, ended, prev_vpids, vp_visit_counts):
         if (not self.args.anti_loop_enabled) or (not self.args.test):
@@ -500,8 +651,11 @@ class GMapObjectNavAgent(Seq2SeqAgent):
             if self.feedback == 'teacher':
                 a_t = nav_targets                 # teacher forcing
             elif self.feedback == 'argmax':
+                reranked_nav_probs = self._apply_instruction_rerank(
+                    obs, nav_probs, nav_logits, nav_vpids, t, ended
+                )
                 reranked_nav_probs = self._apply_anti_loop_penalty(
-                    nav_probs, nav_logits, nav_vpids, gmaps, obs, t, ended, prev_vpids, vp_visit_counts
+                    reranked_nav_probs, nav_logits, nav_vpids, gmaps, obs, t, ended, prev_vpids, vp_visit_counts
                 )
                 _, a_t = reranked_nav_probs.max(1)        # student forcing - argmax
                 a_t = a_t.detach() 

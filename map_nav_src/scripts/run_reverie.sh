@@ -18,6 +18,10 @@ seed="${SEED:-0}"
 mode="${1:-test}"
 dynamic_memory_mode="${DYNAMIC_MEMORY_MODE:-off}"
 dynamic_memory_extra_args="${DYNAMIC_MEMORY_EXTRA_ARGS:-}"
+instr_aug_mode="${INSTR_AUG_MODE:-off}"
+instr_aug_extra_args="${INSTR_AUG_EXTRA_ARGS:-}"
+instr_rerank_mode="${INSTR_RERANK_MODE:-off}"
+instr_rerank_extra_args="${INSTR_RERANK_EXTRA_ARGS:-}"
 anti_loop_mode="${ANTI_LOOP_MODE:-off}"
 anti_loop_extra_args="${ANTI_LOOP_EXTRA_ARGS:-}"
 
@@ -53,6 +57,46 @@ if [[ -n "${dynamic_memory_extra_args}" ]]; then
   # shellcheck disable=SC2206
   extra_dynamic_memory_args=(${dynamic_memory_extra_args})
   dynamic_memory_args+=("${extra_dynamic_memory_args[@]}")
+fi
+
+instr_aug_args=()
+case "${instr_aug_mode}" in
+  off)
+    ;;
+  on)
+    instr_aug_args+=(--instr_aug_enabled)
+    ;;
+  *)
+    echo "Unsupported INSTR_AUG_MODE: ${instr_aug_mode}" >&2
+    echo "Use one of: off, on" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${instr_aug_extra_args}" ]]; then
+  # shellcheck disable=SC2206
+  extra_instr_aug_args=(${instr_aug_extra_args})
+  instr_aug_args+=("${extra_instr_aug_args[@]}")
+fi
+
+instr_rerank_args=()
+case "${instr_rerank_mode}" in
+  off)
+    ;;
+  on)
+    instr_rerank_args+=(--instr_rerank_enabled)
+    ;;
+  *)
+    echo "Unsupported INSTR_RERANK_MODE: ${instr_rerank_mode}" >&2
+    echo "Use one of: off, on" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${instr_rerank_extra_args}" ]]; then
+  # shellcheck disable=SC2206
+  extra_instr_rerank_args=(${instr_rerank_extra_args})
+  instr_rerank_args+=("${extra_instr_rerank_args[@]}")
 fi
 
 anti_loop_args=()
@@ -151,17 +195,21 @@ cuda_devices="${CUDA_VISIBLE_DEVICES:-0}"
 
 case "${mode}" in
   train)
-    echo "Running REVERIE training on ${cuda_devices}, output: ${outdir}, dynamic_memory=${dynamic_memory_mode}, anti_loop=${anti_loop_mode}"
+    echo "Running REVERIE training on ${cuda_devices}, output: ${outdir}, dynamic_memory=${dynamic_memory_mode}, instr_aug=${instr_aug_mode}, instr_rerank=${instr_rerank_mode}, anti_loop=${anti_loop_mode}"
     CUDA_VISIBLE_DEVICES="${cuda_devices}" "${launcher[@]}" main_nav_obj.py ${flag} \
       "${dynamic_memory_args[@]}" \
+      "${instr_aug_args[@]}" \
+      "${instr_rerank_args[@]}" \
       "${anti_loop_args[@]}" \
       --resume_file "${resume_file}" \
       --eval_first
     ;;
   test)
-    echo "Running REVERIE test on ${cuda_devices}, output: ${outdir}, checkpoint: ${resume_file}, dynamic_memory=${dynamic_memory_mode}, anti_loop=${anti_loop_mode}"
+    echo "Running REVERIE test on ${cuda_devices}, output: ${outdir}, checkpoint: ${resume_file}, dynamic_memory=${dynamic_memory_mode}, instr_aug=${instr_aug_mode}, instr_rerank=${instr_rerank_mode}, anti_loop=${anti_loop_mode}"
     CUDA_VISIBLE_DEVICES="${cuda_devices}" "${launcher[@]}" main_nav_obj.py ${flag} \
       "${dynamic_memory_args[@]}" \
+      "${instr_aug_args[@]}" \
+      "${instr_rerank_args[@]}" \
       "${anti_loop_args[@]}" \
       --test --submit \
       --resume_file "${resume_file}"
