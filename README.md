@@ -1,10 +1,10 @@
 # DART-VLN: Test-Time Memory Decay and Anti-Loop Regularization for Discrete Vision-Language Navigation
 ---
-> WORK LEADER :Japluto
+> WORK LEADER : Japluto
 
 This repository is a discrete-environment research fork of GridMM for the paper:
 
-**DART-VLN: Test-Time Memory Decay and Anti-Loop Regularization for Discrete Vision-and-Language Navigation**
+**DART-VLN: Test-Time Memory Decay and Anti-Loop Regularization for Discrete Vision-Language Navigation**
 
 The project focuses on **small, training-free test-time improvements** for discrete VLN.
 Instead of introducing new learnable modules, DART-VLN studies how far we can push performance and behavior quality by modifying:
@@ -17,6 +17,14 @@ The main target datasets are:
 - `R2R`
 - `REVERIE`
 - `RxR`
+
+---
+## Preview
+
+The current repository includes a mesh-based trajectory visualization pipeline.
+The preview below uses the generated local [`trajectory.gif`](trajectory.gif):
+
+![Trajectory Preview](trajectory.gif)
 
 ---
 ## What This Repo Is
@@ -119,6 +127,21 @@ This project intentionally favors:
 - **no architecture rewrite**
 
 In other words, DART-VLN is about improving discrete VLN behavior with simple, explainable mechanisms rather than adding new learned components.
+
+---
+## Workflow
+
+The practical workflow in this repository is:
+
+1. Prepare the discrete VLN environment and local datasets.
+2. Run evaluation or ablations with `decay_only` or `decay_only + anti-loop`.
+3. Export prediction files for `R2R` or `REVERIE`.
+4. Render trajectory visualization on top of the textured bird's-eye mesh.
+
+For the current project, the most useful configurations are:
+
+- `decay_only` for the cleanest memory-side gain
+- `decay_only + anti-loop` for the best behavior / efficiency trade-off
 
 ---
 ## Running Experiments
@@ -234,6 +257,72 @@ ANTI_LOOP_MODE=on \
 ANTI_LOOP_EXTRA_ARGS="--anti_loop_backtrack_penalty 0.28 --anti_loop_revisit_penalty 0.0 --anti_loop_revisit_thresh 2 --anti_loop_min_step 1" \
 bash scripts/run_r2r.sh test
 ```
+
+---
+## Visualization
+
+This repository includes mesh-based bird's-eye trajectory visualization for discrete navigation.
+
+Main files:
+
+- `map_nav_src/scripts/graph_nav_movie.py`
+- `map_nav_src/scripts/decode_glb_basis_textures.js`
+- `run_r2r_mesh_vis.sh`
+- `run_reverie_mesh_vis.sh`
+
+The renderer:
+
+- uses the real Matterport mesh as the bird's-eye base map
+- projects the topological graph onto the mesh plane
+- overlays the ground-truth path, predicted path, current viewpoint, and next move
+- exports `frames/`, `trajectory.gif`, and `trajectory.mp4`
+
+### Visualization Flow
+
+1. Run evaluation and produce prediction files.
+2. Make sure annotations, connectivity files, and `mp3d/*.glb` meshes are available locally.
+3. Run the visualization script for `R2R` or `REVERIE`.
+4. Inspect the generated GIF / MP4 and frame sequence.
+
+### One-Command Visualization
+
+From the repository root:
+
+```bash
+./run_r2r_mesh_vis.sh
+./run_reverie_mesh_vis.sh
+```
+
+Both scripts also support optional arguments:
+
+```bash
+./run_r2r_mesh_vis.sh 5 3
+./run_reverie_mesh_vis.sh 5 3
+```
+
+where the two arguments are:
+
+- number of episodes to render
+- output FPS
+
+### Output Location
+
+The current scripts write visualization results to:
+
+- `visualizations/mesh_bev_textured/r2r`
+- `visualizations/mesh_bev_textured/reverie`
+
+Each rendered episode contains:
+
+- `frames/frame_000.png`, `frame_001.png`, ...
+- `trajectory.gif`
+- `trajectory.mp4`
+
+### Notes
+
+- The first run may be slower because texture decoding dependencies are initialized.
+- The textured renderer uses embedded MP3D texture data when available.
+- If texture decoding fails, the script falls back to a simpler occupancy-style mesh overlay.
 
 ---
 ## Acknowledgement
