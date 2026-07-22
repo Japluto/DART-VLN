@@ -40,7 +40,40 @@ The default DART-VLN configuration combines read-side decay with anti-loop regul
 
 ### Test-Time Memory Decay
 
-For each explicit memory slot, DART-VLN maintains three lightweight metadata values: **age**, **visit count**, and **novelty**. Novelty measures recent feature change and is smoothed with an exponential moving average. During memory readout, the three signals are combined so that stale and repeatedly observed slots receive less weight, while slots with recent feature changes retain more influence.
+For each explicit memory slot $`m_i`$, DART-VLN maintains three lightweight metadata values: slot age $`a_i`$, visit count $`c_i`$, and novelty $`n_i`$. The slot age records how long it has been since the slot was last refreshed:
+
+```math
+a_i = t - t_i^{\mathrm{last}}.
+```
+
+Given the previous and current slot features $`f_i^{\mathrm{old}}`$ and $`f_i^{\mathrm{new}}`$, an instantaneous novelty score is computed and then smoothed with an exponential moving average:
+
+```math
+\begin{aligned}
+\nu_i
+&= \mathrm{clip}\!\left(
+1-\cos\!\left(f_i^{\mathrm{old}},f_i^{\mathrm{new}}\right),
+0,1
+\right), \\
+n_i^{(t)}
+&= \rho n_i^{(t-1)} + (1-\rho)\nu_i.
+\end{aligned}
+```
+
+The implementation uses $`\rho=0.5`$. During memory readout, recency, repetition, and novelty are combined into a bounded slot weight:
+
+```math
+\begin{aligned}
+w_i = \mathrm{clip}\Bigg(&
+\exp(-\lambda a_i)
+\left(1-\alpha\frac{c_i}{c_i+1}\right)
+(0.5+0.5n_i), \\
+&w_{\min},w_{\max}
+\Bigg).
+\end{aligned}
+```
+
+The recency term downweights slots that have not been refreshed for many steps, the repetition term suppresses repeatedly observed regions, and the novelty term preserves slots with recent feature changes.
 
 The default decay module is deliberately read-side only: it reweights slot contributions during aggregation but never overwrites the stored memory content. Lower and upper weight bounds prevent overly weak or aggressive suppression. This conservative design makes the module training-free and keeps the frozen navigation backbone unchanged.
 
@@ -50,6 +83,18 @@ For every candidate target viewpoint, DART-VLN computes the **graph next hop**â€
 
 - a backtrack penalty when the next hop returns directly to the previous viewpoint;
 - a smaller revisit penalty after the next-hop viewpoint has already been visited at least twice.
+
+Let $`s_t(v)`$ be the original action score for candidate target $`v`$, and let $`h(v)`$ be its graph next hop. The anti-loop penalty and adjusted score are:
+
+```math
+\begin{aligned}
+p_t(v)
+&= \beta_{\mathrm{back}}\,\mathbb{I}\!\left[h(v)=v_{t-1}\right]
++ \beta_{\mathrm{rev}}\,\mathbb{I}\!\left[\mathrm{visit}(h(v))\ge k\right], \\
+s'_t(v)
+&= s_t(v)-p_t(v).
+\end{aligned}
+```
 
 The adjusted scores are used only before deterministic argmax action selection. The penalties are finite and no action is masked, so the agent can still backtrack when the original policy provides sufficiently strong evidence. Anti-loop regularization does not alter the stop head, add a planner, or modify the learned backbone.
 
@@ -179,14 +224,26 @@ ANTI_LOOP_EXTRA_ARGS="--anti_loop_backtrack_penalty 0.22 --anti_loop_revisit_pen
 bash scripts/run_reverie.sh test
 ```
 
-The paper configuration uses `decay_lambda=0.12`, `repeat_weight=0.15`, `min_mem_weight=0.35`, `max_mem_weight=1.0`, `backtrack_penalty=0.22`, `revisit_penalty=0.06`, and `revisit_threshold=2`. Available memory modes are:
+The paper configuration uses `decay_lambda=0.12`, `repeat_weight=0.15`, `min_mem_weight=0.35`, `max_mem_weight=1.0`, `backtrack_penalty=0.22`, `revisit_penalty=0.06`, and `revisit_threshold=2`.
+
+### Ablation Switches
+
+Memory intervention and anti-loop control can be enabled independently from the launch scripts:
 
 ```text
 DYNAMIC_MEMORY_MODE=off|update_only|decay_only|full
 ANTI_LOOP_MODE=off|on
 ```
 
-`update_only` and `full` are write-side stress-test variants. The recommended setting is `decay_only + anti-loop`.
+| Setting | Purpose |
+|---|---|
+| `off` | Original GridMM memory behavior; use as the baseline. |
+| `decay_only` | Read-side memory decay without rewriting stored slots. |
+| `update_only` | Write-side heuristic memory updates without read-side decay. |
+| `full` | Write-side updates combined with read-side decay; retained as a stress-test variant. |
+| `ANTI_LOOP_MODE=on` | Adds next-hop anti-loop regularization independently of the memory mode. |
+
+The recommended DART-VLN setting is `decay_only` with `ANTI_LOOP_MODE=on`. The `update_only` and `full` modes are included to reproduce the paper's write-side ablations.
 
 To train or fine-tune the retained GridMM backbone rather than apply the training-free DART-VLN controller, replace `test` with `train` in the corresponding launch command.
 
@@ -210,7 +267,15 @@ DART-VLN/
 
 ## Visualization
 
-The repository includes a Matterport3D mesh-based bird's-eye renderer that overlays the topological graph, ground-truth path, predicted path, current viewpoint, and next step. It exports frame sequences, GIFs, and MP4 videos.
+The repository retains qualitative-analysis tools in addition to the paper method and ablation controls:
+
+- **Textured bird's-eye rendering:** projects the navigation graph and trajectories onto the Matterport3D mesh, including the ground-truth path, predicted path, current viewpoint, and next step.
+- **First-person previews:** exports agent-view trajectory GIFs, MP4 videos, and contact sheets for qualitative inspection.
+- **Reusable outputs:** produces individual frames, animated GIFs, and MP4 videos for R2R and REVERIE episodes.
+
+### Bird's-Eye Renderer
+
+Run the textured bird's-eye visualization pipeline from the repository root:
 
 ```bash
 ./run_r2r_mesh_vis.sh
@@ -224,7 +289,23 @@ Optional arguments set the number of episodes and output FPS:
 ./run_reverie_mesh_vis.sh 5 3
 ```
 
-Outputs are written under `visualizations/mesh_bev_textured/`. A lightweight public example for `scan=JeFG25nYj2p` and `instr_id=831_0` is provided in [`example_831_0`](example_831_0/README.md).
+Bird's-eye outputs are written under `visualizations/mesh_bev_textured/`.
+
+### First-Person Renderer
+
+The first-person exporter renders the agent's RGB view along a predicted or manually supplied trajectory:
+
+```bash
+python map_nav_src/scripts/export_fpv_trajectory.py \
+  --preds <predictions.json> \
+  --annotations <annotations.json> \
+  --instr-id <instruction_id> \
+  --connectivity-dir datasets/R2R/connectivity \
+  --skybox-root <matterport_skybox_root> \
+  --output-dir visualizations/fpv
+```
+
+Each episode export contains individual frames, `trajectory.gif`, `trajectory.mp4`, `contact_sheet.png`, and rendering metadata. A lightweight public example for `scan=JeFG25nYj2p` and `instr_id=831_0` is provided in [`example_831_0`](example_831_0/README.md).
 
 ## Citation
 
