@@ -26,12 +26,9 @@ The default DART-VLN configuration combines read-side decay with anti-loop regul
 
 ## Highlights
 
-- **Training-free:** uses the original GridMM checkpoints with no additional optimization.
-- **Plug-in inference control:** the navigation backbone and stored memory representations remain unchanged.
-- **Efficient navigation:** reduces stale-memory interference, local backtracking, trajectory length, and runtime.
-- **Clean ablations:** supports `off`, `decay_only`, `update_only`, and `full` memory modes, with anti-loop control enabled independently.
-- **R2R and REVERIE:** evaluated on both instruction-following navigation and remote object grounding.
-- **Trajectory visualization:** includes textured bird's-eye and first-person rendering utilities for Matterport3D scenes.
+- **Training-free memory control:** DART-VLN is a plug-in layer for discrete VLN pipelines with explicit memory. Its read-side decay suppresses stale and redundant evidence without rewriting stored content, retraining the model, or adding learnable parameters.
+- **Lightweight anti-loop regularization:** a next-hop-based action penalty discourages immediate backtracking and improves trajectory efficiency directly at inference time, without introducing a planner or modifying the frozen navigation backbone.
+- **Consistent navigation-efficiency gains:** experiments with a GridMM-based navigator on R2R and REVERIE show that read-side decay preserves or improves task performance, while combining decay with anti-loop regularization provides the best overall balance between navigation quality and efficiency among the evaluated variants.
 
 ## Method
 
