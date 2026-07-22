@@ -3,11 +3,11 @@
 [![Conference](https://img.shields.io/badge/IEEE%20SMC-2026-blue)](https://www.ieeesmc2026.org/)
 [![Code](https://img.shields.io/badge/Code-DART--VLN-black?logo=github)](https://github.com/Japluto/DART-VLN)
 
-**Shaoheng Zhang¹**, **Zhichen Li²**, and **Jie Mei¹\***
+**Shaoheng Zhang<sup>1</sup>**, **Zhichen Li<sup>2</sup>**, and **Jie Mei<sup>1,*</sup>**
 
-¹ School of Intelligence Science and Engineering, Harbin Institute of Technology, Shenzhen<br>
-² School of Computer Science and Technology, Harbin Institute of Technology, Shenzhen<br>
-\* Corresponding author
+<sup>1</sup> School of Intelligence Science and Engineering, Harbin Institute of Technology, Shenzhen<br>
+<sup>2</sup> School of Computer Science and Technology, Harbin Institute of Technology, Shenzhen<br>
+<sup>*</sup> Corresponding author
 
 > **Accepted by the 2026 IEEE International Conference on Systems, Man, and Cybernetics (IEEE SMC 2026).**
 
@@ -35,33 +35,30 @@ The default DART-VLN configuration combines read-side decay with anti-loop regul
 
 ## Method
 
+<p align="center">
+  <img src="assets/dart-vln-framework.png" alt="Overview of the DART-VLN framework" width="100%">
+</p>
+
+<p align="center"><em>Figure 1. DART-VLN is a plug-in test-time control layer for discrete VLN pipelines with explicit memory. Memory decay reweights historical slots at readout, while anti-loop regularization adjusts next-hop scores before argmax. The backbone remains frozen and no learnable parameters are added.</em></p>
+
 ### Test-Time Memory Decay
 
-For each memory slot, DART-VLN tracks its age, visit count, and feature novelty. An exponential moving average is used for novelty, and the readout weight combines recency, repetition, and novelty:
+For each explicit memory slot, DART-VLN maintains three lightweight metadata values: **age**, **visit count**, and **novelty**. Novelty measures recent feature change and is smoothed with an exponential moving average. During memory readout, the three signals are combined so that stale and repeatedly observed slots receive less weight, while slots with recent feature changes retain more influence.
 
-$$
-w_i = \operatorname{clip}\left(
-e^{-\lambda a_i}
-\left(1-\alpha\frac{c_i}{c_i+1}\right)
-(0.5+0.5n_i),
-w_{\min}, w_{\max}
-\right).
-$$
-
-The weighting is applied only when memory is read. It does not overwrite the stored slot representation.
+The default decay module is deliberately read-side only: it reweights slot contributions during aggregation but never overwrites the stored memory content. Lower and upper weight bounds prevent overly weak or aggressive suppression. This conservative design makes the module training-free and keeps the frozen navigation backbone unchanged.
 
 ### Anti-Loop Regularization
 
-For a candidate target viewpoint $v$, DART-VLN inspects its graph next hop $h(v)$ and adjusts the original action score:
+For every candidate target viewpoint, DART-VLN computes the **graph next hop**—the local transition that would actually be executed from the current viewpoint. It then applies two lightweight score penalties:
 
-$$
-p_t(v)=\beta_{\mathrm{back}}\mathbb{1}[h(v)=v_{t-1}]
-+\beta_{\mathrm{rev}}\mathbb{1}[\operatorname{visit}(h(v))\geq k],
-\qquad
-s'_t(v)=s_t(v)-p_t(v).
-$$
+- a backtrack penalty when the next hop returns directly to the previous viewpoint;
+- a smaller revisit penalty after the next-hop viewpoint has already been visited at least twice.
 
-The penalty is finite and no action is masked, so the agent can still backtrack when supported by sufficiently strong model evidence. It is applied only during deterministic argmax inference and does not modify the stop head or add a planner.
+The adjusted scores are used only before deterministic argmax action selection. The penalties are finite and no action is masked, so the agent can still backtrack when the original policy provides sufficiently strong evidence. Anti-loop regularization does not alter the stop head, add a planner, or modify the learned backbone.
+
+### Conservative Test-Time Control
+
+The default DART-VLN configuration combines **read-side memory decay** with **anti-loop regularization**. The write-side `update_only` and `full` variants are included as stress tests because rewriting frozen-policy memory is less stable. This separation keeps the default intervention compact, interpretable, and easy to apply to an existing GridMM checkpoint.
 
 ## Main Results
 
@@ -84,6 +81,14 @@ All variants below use the same GridMM checkpoints and differ only in test-time 
 | **DART-VLN (decay + anti-loop)** | **21.57** | 57.99 | **52.34** | **37.53** | **35.37** | **25.44** | **1497.98** |
 
 Anti-loop regularization also reduces immediate backtracking from 3.51% to 2.01% on R2R Val Unseen and from 8.45% to 5.99% on REVERIE Val Unseen relative to decay-only.
+
+### Navigation Behavior
+
+<p align="center">
+  <img src="assets/dart-vln-behavior.png" alt="Navigation behavior comparison between GridMM and DART-VLN" width="100%">
+</p>
+
+<p align="center"><em>Figure 2. Decay plus anti-loop avoids immediate backtracking and follows a shorter path than the baseline.</em></p>
 
 ## Installation
 
@@ -177,7 +182,7 @@ ANTI_LOOP_EXTRA_ARGS="--anti_loop_backtrack_penalty 0.22 --anti_loop_revisit_pen
 bash scripts/run_reverie.sh test
 ```
 
-The paper configuration uses $\lambda=0.12$, $\alpha=0.15$, $w_{\min}=0.35$, $w_{\max}=1.0$, $\beta_{\mathrm{back}}=0.22$, $\beta_{\mathrm{rev}}=0.06$, and $k=2$. Available memory modes are:
+The paper configuration uses `decay_lambda=0.12`, `repeat_weight=0.15`, `min_mem_weight=0.35`, `max_mem_weight=1.0`, `backtrack_penalty=0.22`, `revisit_penalty=0.06`, and `revisit_threshold=2`. Available memory modes are:
 
 ```text
 DYNAMIC_MEMORY_MODE=off|update_only|decay_only|full
