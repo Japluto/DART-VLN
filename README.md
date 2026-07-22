@@ -63,14 +63,7 @@ n_i^{(t)}
 The implementation uses $`\rho=0.5`$. During memory readout, recency, repetition, and novelty are combined into a bounded slot weight:
 
 ```math
-\begin{aligned}
-w_i = \mathrm{clip}\Bigg(&
-\exp(-\lambda a_i)
-\left(1-\alpha\frac{c_i}{c_i+1}\right)
-(0.5+0.5n_i), \\
-&w_{\min},w_{\max}
-\Bigg).
-\end{aligned}
+w_i = \mathrm{clip}\!\left(\exp(-\lambda a_i)\left(1-\alpha\frac{c_i}{c_i+1}\right)(0.5+0.5n_i),\,w_{\min},\,w_{\max}\right).
 ```
 
 The recency term downweights slots that have not been refreshed for many steps, the repetition term suppresses repeatedly observed regions, and the novelty term preserves slots with recent feature changes.
