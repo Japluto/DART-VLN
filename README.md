@@ -3,11 +3,9 @@
 [![Conference](https://img.shields.io/badge/IEEE%20SMC-2026-blue)](https://www.ieeesmc2026.org/)
 [![Code](https://img.shields.io/badge/Code-DART--VLN-black?logo=github)](https://github.com/Japluto/DART-VLN)
 
-**Shaoheng Zhang<sup>1</sup>**, **Zhichen Li<sup>2</sup>**, and **Jie Mei<sup>1,*</sup>**
+**Shaoheng Zhang**, **Zhichen Li**, **Guangfu Ma<sup>*</sup>**, and **Jie Mei<sup>*</sup>**
 
-<sup>1</sup> School of Intelligence Science and Engineering, Harbin Institute of Technology, Shenzhen<br>
-<sup>2</sup> School of Computer Science and Technology, Harbin Institute of Technology, Shenzhen<br>
-<sup>*</sup> Corresponding author
+Harbin Institute of Technology, Shenzhen, Guangdong, China<br><sup>*</sup> Corresponding authors: [Guangfu Ma](mailto:magf@hit.edu.cn) and [Jie Mei](mailto:jmei@hit.edu.cn)
 
 > **Accepted by the 2026 IEEE International Conference on Systems, Man, and Cybernetics (IEEE SMC 2026).**
 
@@ -307,7 +305,7 @@ If you find this project useful, please cite:
 ```bibtex
 @inproceedings{zhang2026dartvln,
   title     = {{DART-VLN}: Test-Time Memory Decay and Anti-Loop Regularization for Discrete Vision-Language Navigation},
-  author    = {Zhang, Shaoheng and Li, Zhichen and Mei, Jie},
+  author    = {Zhang, Shaoheng and Li, Zhichen and Ma, Guangfu and Mei, Jie},
   booktitle = {2026 IEEE International Conference on Systems, Man, and Cybernetics (SMC)},
   year      = {2026},
   note      = {Accepted}
@@ -315,5 +313,7 @@ If you find this project useful, please cite:
 ```
 
 ## Acknowledgments
+
+This work was supported by the Shenzhen Fundamental Research Program under Grant `GXWD20231129140908002`.
 
 This project is built on [GridMM](https://github.com/MrZihan/GridMM), [VLN-DUET](https://github.com/cshizhe/VLN-DUET), and [Matterport3DSimulator](https://github.com/peteanderson80/Matterport3DSimulator). We thank the authors for releasing their code and resources.
