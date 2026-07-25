@@ -3,9 +3,9 @@
 [![Conference](https://img.shields.io/badge/IEEE%20SMC-2026-blue)](https://www.ieeesmc2026.org/)
 [![Code](https://img.shields.io/badge/Code-DART--VLN-black?logo=github)](https://github.com/Japluto/DART-VLN)
 
-**Shaoheng Zhang**, **Zhichen Li**, **Guangfu Ma<sup>*</sup>**, and **Jie Mei<sup>*</sup>**
+**Shaoheng Zhang**, **Zhichen Li**, **Guangfu Ma**, and **Jie Mei**
 
-Harbin Institute of Technology, Shenzhen, Guangdong, China<br><sup>*</sup> Corresponding authors: [Guangfu Ma](mailto:magf@hit.edu.cn) and [Jie Mei](mailto:jmei@hit.edu.cn)
+Harbin Institute of Technology, Shenzhen, Guangdong, China
 
 > **Accepted by the 2026 IEEE International Conference on Systems, Man, and Cybernetics (IEEE SMC 2026).**
 
@@ -313,7 +313,5 @@ If you find this project useful, please cite:
 ```
 
 ## Acknowledgments
-
-This work was supported by the Shenzhen Fundamental Research Program under Grant `GXWD20231129140908002`.
 
 This project is built on [GridMM](https://github.com/MrZihan/GridMM), [VLN-DUET](https://github.com/cshizhe/VLN-DUET), and [Matterport3DSimulator](https://github.com/peteanderson80/Matterport3DSimulator). We thank the authors for releasing their code and resources.
